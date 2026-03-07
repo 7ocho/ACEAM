@@ -82,7 +82,7 @@ def _normalize_device_type(device: Any) -> str:
 def _select_compute_dtype(device_type: str) -> torch.dtype:
     """Pick the compute dtype for each accelerator."""
     if device_type in ("cuda", "xpu"):
-        return torch.bfloat16
+        return torch.float16    # <--- CHANGED THIS TO float16
     if device_type == "mps":
         return torch.float16
     return torch.float32
@@ -91,7 +91,7 @@ def _select_compute_dtype(device_type: str) -> torch.dtype:
 def _select_fabric_precision(device_type: str) -> str:
     """Pick Fabric precision plugin setting for each accelerator."""
     if device_type in ("cuda", "xpu"):
-        return "bf16-mixed"
+        return "16-mixed"    # <--- CHANGED THIS TO 16-mixed (which means fp16)
     if device_type == "mps":
         # Use AMP on MPS for better throughput. Trainable LoRA parameters are
         # explicitly forced to fp32 before optimizer/Fabric setup.
