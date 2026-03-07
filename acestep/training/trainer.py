@@ -114,18 +114,18 @@ def _ensure_trainable_params_fp32(module: nn.Module) -> Tuple[int, int]:
     return casted, total
 
 
-def _count_nonfinite_grads(params: List[torch.nn.Parameter]) -> Tuple[int, int]:
-    """Count non-finite gradient tensors among params with gradients."""
-    nonfinite = 0
-    total_with_grad = 0
-    for p in params:
-        g = p.grad
-        if g is None:
-            continue
-        total_with_grad += 1
-        if not torch.isfinite(g).all():
-            nonfinite += 1
-    return nonfinite, total_with_grad
+# def _count_nonfinite_grads(params: List[torch.nn.Parameter]) -> Tuple[int, int]:
+#     """Count non-finite gradient tensors among params with gradients."""
+#     nonfinite = 0
+#     total_with_grad = 0
+#     for p in params:
+#         g = p.grad
+#         if g is None:
+#             continue
+#         total_with_grad += 1
+#         if not torch.isfinite(g).all():
+#             nonfinite += 1
+#     return nonfinite, total_with_grad
 
 
 def _ensure_optimizer_params_fp32(optimizer: torch.optim.Optimizer) -> Tuple[int, int]:
@@ -961,32 +961,15 @@ class LoRATrainer:
                 accumulation_step += 1
 
                 # Optimizer step
-                if (
-                    accumulation_step
-                    >= self.training_config.gradient_accumulation_steps
-                ):
-                    nonfinite_grads, grad_tensors = _count_nonfinite_grads(
-                        trainable_params
-                    )
-                    if nonfinite_grads > 0:
-                        optimizer.zero_grad(set_to_none=True)
-                        yield (
-                            global_step,
-                            float("nan"),
-                            (
-                                f"⚠️ Non-finite gradients ({nonfinite_grads}/{grad_tensors}); "
-                                "skipping optimizer step"
-                            ),
-                        )
-                        accumulated_loss = 0.0
-                        accumulation_step = 0
-                        continue
-
-                    # FIX for T4/FP16: Manually unscale and clip
+                if accumulation_step >= self.training_config.gradient_accumulation_steps:
+                    # FIX for T4/FP16: Manually unscale
                     if hasattr(self.fabric.strategy.precision, "scaler") and self.fabric.strategy.precision.scaler:
                         self.fabric.strategy.precision.scaler.unscale_(optimizer)
+                    
+                    # FIX: Clip gradients using standard PyTorch
                     torch.nn.utils.clip_grad_norm_(trainable_params, self.training_config.max_grad_norm)
 
+                    # Step (Scaler will automatically skip this step if NaNs exist, and reduce scale for next time)
                     optimizer.step()
                     scheduler.step()
                     optimizer.zero_grad(set_to_none=True)
@@ -1024,28 +1007,16 @@ class LoRATrainer:
             # Flush remainder to avoid dropping gradients when epoch length is not
             # divisible by gradient_accumulation_steps.
             if accumulation_step > 0:
-                nonfinite_grads, grad_tensors = _count_nonfinite_grads(trainable_params)
-                if nonfinite_grads > 0:
-                    optimizer.zero_grad(set_to_none=True)
-                    yield (
-                        global_step,
-                        float("nan"),
-                        (
-                            f"⚠️ Non-finite gradients ({nonfinite_grads}/{grad_tensors}); "
-                            "skipping optimizer remainder step"
-                        ),
-                    )
-                    accumulated_loss = 0.0
-                    accumulation_step = 0
-                else:
-                    # FIX for T4/FP16: Manually unscale and clip
-                    if hasattr(self.fabric.strategy.precision, "scaler") and self.fabric.strategy.precision.scaler:
-                        self.fabric.strategy.precision.scaler.unscale_(optimizer)
-                    torch.nn.utils.clip_grad_norm_(trainable_params, self.training_config.max_grad_norm)
+                # FIX for T4/FP16: Manually unscale
+                if hasattr(self.fabric.strategy.precision, "scaler") and self.fabric.strategy.precision.scaler:
+                    self.fabric.strategy.precision.scaler.unscale_(optimizer)
+                
+                # FIX: Clip gradients
+                torch.nn.utils.clip_grad_norm_(trainable_params, self.training_config.max_grad_norm)
 
-                    optimizer.step()
-                    scheduler.step()
-                    optimizer.zero_grad(set_to_none=True)
+                optimizer.step()
+                scheduler.step()
+                optimizer.zero_grad(set_to_none=True)
 
                 global_step += 1
                 avg_loss = accumulated_loss / accumulation_step
