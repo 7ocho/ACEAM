@@ -982,12 +982,10 @@ class LoRATrainer:
                         accumulation_step = 0
                         continue
 
-                    self.fabric.clip_gradients(
-                        self.module.model.decoder,
-                        optimizer,
-                        max_norm=self.training_config.max_grad_norm,
-                        error_if_nonfinite=False,
-                    )
+                    # FIX for T4/FP16: Manually unscale and clip
+                    if hasattr(self.fabric.strategy.precision, "scaler") and self.fabric.strategy.precision.scaler:
+                        self.fabric.strategy.precision.scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(trainable_params, self.training_config.max_grad_norm)
 
                     optimizer.step()
                     scheduler.step()
@@ -1040,12 +1038,10 @@ class LoRATrainer:
                     accumulated_loss = 0.0
                     accumulation_step = 0
                 else:
-                    self.fabric.clip_gradients(
-                        self.module.model.decoder,
-                        optimizer,
-                        max_norm=self.training_config.max_grad_norm,
-                        error_if_nonfinite=False,
-                    )
+                    # FIX for T4/FP16: Manually unscale and clip
+                    if hasattr(self.fabric.strategy.precision, "scaler") and self.fabric.strategy.precision.scaler:
+                        self.fabric.strategy.precision.scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(trainable_params, self.training_config.max_grad_norm)
 
                     optimizer.step()
                     scheduler.step()
