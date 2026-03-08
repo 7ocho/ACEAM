@@ -619,25 +619,15 @@ def main():
             if p and p not in allowed_paths:
                 allowed_paths.append(p)
 
-        # --- MULTI-GPU INDEPENDENT UI SETUP ---
-        # 1. Get the Local Rank (0 for GPU 0, 1 for GPU 1)
-        local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-        
-        # 2. Calculate a unique port for this GPU
-        # GPU 0 uses 7860, GPU 1 uses 7861
-        gpu_port = args.port + local_rank
-        
-        print(f"🚀 [GPU {local_rank}] Launching independent UI on port {gpu_port}...")
-
         # Enable API endpoints if requested
         if args.enable_api:
-            print(f"[GPU {local_rank}] Enabling API endpoints...")
+            print("Enabling API endpoints...")
             from acestep.ui.gradio.api.api_routes import setup_api_routes
 
             # Launch Gradio first with prevent_thread_lock=True
             demo.launch(
                 server_name=args.server_name,
-                server_port=gpu_port,  # <--- CHANGED: Uses unique port
+                server_port=args.port,
                 share=args.share,
                 debug=args.debug,
                 show_error=True,
@@ -651,9 +641,9 @@ def main():
             setup_api_routes(demo, dit_handler, llm_handler, api_key=args.api_key)
 
             if args.api_key:
-                print(f"[GPU {local_rank}] API authentication enabled")
+                print("API authentication enabled")
             print(
-                f"[GPU {local_rank}] API endpoints enabled: /health, /v1/models, /release_task, /query_result, /create_random_sample, /format_lyrics"
+                "API endpoints enabled: /health, /v1/models, /release_task, /query_result, /create_random_sample, /format_lyrics"
             )
 
             # Keep the main thread alive
@@ -663,11 +653,11 @@ def main():
 
                     time.sleep(1)
             except KeyboardInterrupt:
-                print(f"\n[GPU {local_rank}] Shutting down...")
+                print("\nShutting down...")
         else:
             demo.launch(
                 server_name=args.server_name,
-                server_port=gpu_port,  # <--- CHANGED: Uses unique port
+                server_port=args.port,
                 share=args.share,
                 debug=args.debug,
                 show_error=True,
