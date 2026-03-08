@@ -726,7 +726,7 @@ class LoRATrainer:
         # Initialize Fabric
         fabric_kwargs = {
             "accelerator": accelerator,
-            "devices": 1,
+            "devices": 2,
             "precision": precision,
         }
         if tb_logger is not None:
@@ -993,11 +993,12 @@ class LoRATrainer:
                         self.fabric.log(
                             "train/lr", scheduler.get_last_lr()[0], step=global_step
                         )
-                        yield (
-                            global_step,
-                            avg_loss,
-                            f"Epoch {epoch + 1}/{self.training_config.max_epochs}, Step {global_step}, Loss: {avg_loss:.4f}",
-                        )
+                        if self.fabric.global_rank == 0:
+                            yield (
+                                global_step,
+                                avg_loss,
+                                f"Epoch {epoch + 1}/{self.training_config.max_epochs}, Step {global_step}, Loss: {avg_loss:.4f}",
+                            )
 
                     epoch_loss += avg_loss
                     num_updates += 1
@@ -1094,35 +1095,40 @@ class LoRATrainer:
 
             # Save checkpoint
             if (epoch + 1) % self.training_config.save_every_n_epochs == 0:
-                checkpoint_dir = os.path.join(
-                    self.training_config.output_dir, "checkpoints", f"epoch_{epoch + 1}_loss_{avg_epoch_loss:.4f}"
-                )
-                save_training_checkpoint(
-                    self.module.model,
-                    optimizer,
-                    scheduler,
-                    epoch + 1,
-                    global_step,
-                    checkpoint_dir,
-                )
-                yield (
-                    global_step,
-                    avg_epoch_loss,
-                    f"💾 Checkpoint saved at epoch {epoch + 1}",
-                )
+                if self.fabric.global_rank == 0:
+                    checkpoint_dir = os.path.join(
+                        self.training_config.output_dir, "checkpoints", f"epoch_{epoch + 1}_loss_{avg_epoch_loss:.4f}"
+                    )
+                    save_training_checkpoint(
+                        self.module.model,
+                        optimizer,
+                        scheduler,
+                        epoch + 1,
+                        global_step,
+                        checkpoint_dir,
+                    )
+                    yield (
+                        global_step,
+                        avg_epoch_loss,
+                        f"💾 Checkpoint saved at epoch {epoch + 1}",
+                    )
+                    # Ensure all GPUs wait for the save to finish before starting next epoch
+                self.fabric.barrier()
 
+        
         # Save final model
-        final_path = os.path.join(self.training_config.output_dir, "final")
-        save_lora_weights(self.module.model, final_path)
-
-        final_loss = (
-            self.module.training_losses[-1] if self.module.training_losses else 0.0
-        )
-        yield (
-            global_step,
-            final_loss,
-            f"✅ Training complete! LoRA saved to {final_path}",
-        )
+        if self.fabric.global_rank == 0:
+            final_path = os.path.join(self.training_config.output_dir, "final")
+            save_lora_weights(self.module.model, final_path)
+    
+            final_loss = (
+                self.module.training_losses[-1] if self.module.training_losses else 0.0
+            )
+            yield (
+                global_step,
+                final_loss,
+                f"✅ Training complete! LoRA saved to {final_path}",
+            )
 
     def _train_basic(
         self,
